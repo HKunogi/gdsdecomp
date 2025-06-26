@@ -1,5 +1,5 @@
 def can_build(env, platform):
-    return True
+    return env.editor_build and platform == "windows"
 
 import methods
 
@@ -33,6 +33,8 @@ def monkey_patch_sort_module_list():
 def configure(env):
     if not env.editor_build:
         monkey_patch_sort_module_list()
+    if env["platform"] == "windows":
+        env.Append(LIBS=["userenv"])
 
 
 def get_doc_classes():

@@ -46,6 +46,9 @@
 #if defined(minor)
 #undef minor
 #endif
+#if defined(STRICT)
+#undef STRICT
+#endif
 
 class SemVer : public RefCounted {
 	GDCLASS(SemVer, RefCounted);
