@@ -914,6 +914,14 @@ struct VarWriter {
 		}
 	}
 
+	static String _write_string_variant(const String &p_string) {
+		if (is_script) {
+			return "\"" + p_string.c_escape() + "\"";
+		} else {
+			return "\"" + p_string.c_escape_multiline() + "\"";
+		}
+	}
+
 	static Error write_compat_v2_v3(const Variant &p_variant, VariantWriterCompat::StoreStringFunc p_store_string_func, void *p_store_string_ud, VariantWriterCompat::EncodeResourceFunc p_encode_res_func, void *p_encode_res_ud);
 	static Error write_compat_v4(const Variant &p_variant, VariantWriterCompat::StoreStringFunc p_store_string_func, void *p_store_string_ud, VariantWriterCompat::EncodeResourceFunc p_encode_res_func, void *p_encode_res_ud, int p_recursion_count);
 }; // struct VariantWriterCompatInstance
@@ -941,7 +949,7 @@ Error VarWriter<ver_major, is_pcfg, is_script, p_compat, after_4_3>::write_compa
 		} break;
 		case Variant::STRING: {
 			String str = p_variant;
-			str = "\"" + str.c_escape_multiline() + "\"";
+			str = _write_string_variant(str);
 			p_store_string_func(p_store_string_ud, str);
 		} break;
 
@@ -1408,7 +1416,7 @@ Error VarWriter<ver_major, is_pcfg, is_script, p_compat, after_4_3>::write_compa
 			p_store_string_func(p_store_string_ud, p_variant.operator bool() ? "true" : "false");
 		} break;
 		case Variant::INT: {
-			p_store_string_func(p_store_string_ud, itos(p_variant.operator int()));
+			p_store_string_func(p_store_string_ud, itos(p_variant.operator int64_t()));
 		} break;
 		case Variant::FLOAT: { // "REAL" in v2 and v3
 			String s = rtosfix(p_variant.operator double());
@@ -1421,7 +1429,7 @@ Error VarWriter<ver_major, is_pcfg, is_script, p_compat, after_4_3>::write_compa
 		case Variant::STRING: {
 			String str = p_variant;
 
-			str = "\"" + str.c_escape_multiline() + "\"";
+			str = _write_string_variant(str);
 			p_store_string_func(p_store_string_ud, str);
 		} break;
 		case Variant::VECTOR2: {
@@ -1601,7 +1609,8 @@ Error VarWriter<ver_major, is_pcfg, is_script, p_compat, after_4_3>::write_compa
 			LocalVector<Variant> keys = dict.get_key_list();
 			keys.sort();
 
-			p_store_string_func(p_store_string_ud, "{\n");
+			// no newlines in pcfg
+			p_store_string_func(p_store_string_ud, is_pcfg && ver_major == 2 ? "{" : "{\n");
 			for (size_t i = 0; i < keys.size(); i++) {
 				const Variant &E = keys[i];
 				/*
@@ -1612,10 +1621,10 @@ Error VarWriter<ver_major, is_pcfg, is_script, p_compat, after_4_3>::write_compa
 				p_store_string_func(p_store_string_ud, ": ");
 				write_compat_v2_v3(dict[E], p_store_string_func, p_store_string_ud, p_encode_res_func, p_encode_res_ud);
 				if (i < keys.size() - 1)
-					p_store_string_func(p_store_string_ud, ",\n");
+					p_store_string_func(p_store_string_ud, is_pcfg && ver_major == 2 ? ", " : ",\n");
 			}
 
-			p_store_string_func(p_store_string_ud, "\n}");
+			p_store_string_func(p_store_string_ud, is_pcfg && ver_major == 2 ? "}" : "\n}");
 
 		} break;
 		case Variant::ARRAY: {

@@ -156,7 +156,6 @@ public:
 		BYTECODE_TEST_PASS,
 		BYTECODE_TEST_FAIL,
 		BYTECODE_TEST_CORRUPT,
-		BYTECODE_TEST_UNKNOWN,
 	};
 	enum : uint32_t {
 		TOKEN_BYTE_MASK = 0x80,
@@ -211,6 +210,8 @@ protected:
 	// GDScript version 2.0
 	Error get_ids_consts_tokens_v2(const Vector<uint8_t> &p_buffer, Vector<StringName> &r_identifiers, Vector<Variant> &r_constants, Vector<uint32_t> &r_tokens, HashMap<uint32_t, uint32_t> &lines, HashMap<uint32_t, uint32_t> &end_lines, HashMap<uint32_t, uint32_t> &columns);
 
+	static Vector<uint8_t> _get_buffer_encrypted(const String &p_path, int engine_ver_major, Vector<uint8_t> p_key);
+
 public:
 	static Vector<String> get_bytecode_versions();
 
@@ -254,6 +255,12 @@ public:
 	String get_constant_string(Vector<Variant> &constants, uint32_t constId);
 	Vector<String> get_compile_errors(const Vector<uint8_t> &p_buffer);
 	Error test_bytecode_match(const Vector<uint8_t> &p_buffer1, const Vector<uint8_t> &p_buffer2);
+
+	static bool token_is_keyword(GlobalToken p_token);
+	static bool token_is_keyword_called_like_function(GlobalToken p_token);
+	static bool token_is_control_flow_keyword(GlobalToken p_token);
+	static bool token_is_constant(GlobalToken p_token);
+	static bool token_is_operator_keyword(GlobalToken p_token);
 };
 
 VARIANT_ENUM_CAST(GDScriptDecomp::BytecodeTestResult)

@@ -17,6 +17,17 @@ String ImportInfo::as_text(bool full) {
 	s += "\n\ttype: " + get_type();
 	s += "\n\timporter: " + get_importer();
 	s += "\n\tsource_file: " + get_source_file();
+	auto additional_sources = get_additional_sources();
+	if (additional_sources.size() > 0) {
+		s += "\n\tadditional_sources: [";
+		for (int i = 0; i < additional_sources.size(); i++) {
+			if (i > 0) {
+				s += ", ";
+			}
+			s += " " + additional_sources[i];
+		}
+		s += " ]";
+	}
 	s += "\n\tdest_files: [";
 	Vector<String> dest_files = get_dest_files();
 	for (int i = 0; i < dest_files.size(); i++) {
@@ -26,6 +37,14 @@ String ImportInfo::as_text(bool full) {
 		s += " " + dest_files[i];
 	}
 	s += " ]";
+	Dictionary metadata_prop = get_metadata_prop();
+	if (!metadata_prop.is_empty()) {
+		s += "\n\tremap_metadata: {";
+		for (auto &E : metadata_prop) {
+			s += "\n\t\t" + E.key.to_json_string() + ": " + E.value.to_json_string();
+		}
+		s += "\n\t}";
+	}
 	s += "\n\tparams: {";
 	Dictionary params = get_params();
 	auto keys = params.get_key_list();
@@ -134,6 +153,7 @@ Ref<ResourceImportMetadatav2> copy_imd_v2(Ref<ResourceImportMetadatav2> p_cf) {
 }
 
 Ref<ImportInfo> ImportInfo::copy(const Ref<ImportInfo> &p_iinfo) {
+	ERR_FAIL_COND_V_MSG(p_iinfo.is_null(), Ref<ImportInfo>(), "ImportInfo is null");
 	Ref<ImportInfo> r_iinfo;
 	switch (p_iinfo->iitype) {
 		case IInfoType::MODERN:
@@ -576,7 +596,6 @@ Error ImportInfov2::_load(const String &p_path) {
 	if (err) {
 		ERR_FAIL_V_MSG(err, "Could not load resource info from " + p_path);
 	}
-	String dest;
 	String source_file;
 	String importer;
 	// This is an import file, possibly has import metadata
@@ -585,42 +604,70 @@ Error ImportInfov2::_load(const String &p_path) {
 	dest_files.push_back(p_path);
 	ver_major = res_info->ver_major;
 	ver_minor = res_info->ver_minor;
-	if (res_info->v2metadata.is_valid()) {
+	if (res_info->v2metadata.is_valid() && res_info->v2metadata->get_source_count() > 0 && !res_info->v2metadata->get_editor().is_empty()) {
 		v2metadata = res_info->v2metadata;
 		return OK;
+	} else if (res_info->v2metadata.is_valid()) {
+		// v2 sometimes wrote a "thumbnail" param to the import metadata, even if the resource was not an import
+		v2metadata = res_info->v2metadata;
+		if (v2metadata->get_source_count() > 0) {
+			source_file = v2metadata->get_source_path(0);
+		}
+		importer = v2metadata->get_editor();
+	} else {
+		v2metadata.instantiate();
+	}
+	if (source_file.is_empty()) {
+		source_file = GDRESettings::get_singleton()->get_remapped_source_path(p_path);
 	}
 	Vector<String> spl = p_path.get_file().split(".");
 	// Otherwise, we dont have any meta data, and we have to guess what it is
 	// If this is a "converted" file, then it won't have import metadata, and we expect that
 	String old_ext = p_path.get_extension().to_lower();
-	if (!p_path.contains(".converted.")) {
-		if ((old_ext == "gde" || old_ext == "gdc")) {
-			auto_converted_export = true;
-			source_file = p_path.get_basename() + ".gd";
-			old_ext = "gd";
-			importer = "script_bytecode";
+
+	auto get_new_ext = [&](String old_ext) {
+		String new_ext;
+		if (old_ext == "tex") {
+			new_ext = "png";
+		} else if (old_ext == "smp") {
+			new_ext = "wav";
+		} else if (old_ext == "cbm") {
+			new_ext = "cube";
+		} else if (type == "AtlasTexture") {
+			// auto-created AtlasTexture, it would be in the project directory
+			new_ext = "png";
+		} else if (old_ext == "scn" || type == "PackedScene") {
+			new_ext = "glb";
 		} else {
-			String new_ext;
-			if (old_ext == "tex") {
-				new_ext = "png";
-			} else if (old_ext == "smp") {
-				new_ext = "wav";
-			} else if (old_ext == "cbm") {
-				new_ext = "cube";
-			} else if (type == "AtlasTexture") {
-				new_ext = "png";
-			} else {
-				new_ext = "fixme";
-			}
-			// others??
-			source_file = String("res://.assets").path_join(p_path.replace("res://", "").get_base_dir().path_join(spl[0] + "." + new_ext));
+			new_ext = "fixme";
 		}
+		return new_ext;
+	};
+
+	if ((old_ext == "gde" || old_ext == "gdc")) {
+		auto_converted_export = true;
+		source_file = source_file.is_empty() ? p_path.get_basename().trim_suffix(".converted") + ".gd" : source_file;
+		importer = "script_bytecode";
+	} else if (source_file.is_empty() && !p_path.contains(".converted.")) {
+		String base_dir = "res://.assets";
+		String new_ext = get_new_ext(old_ext);
+		if (type == "AtlasTexture") {
+			// auto-created AtlasTexture, it would be in the project directory
+			base_dir = "res://";
+		}
+		// others??
+		source_file = base_dir.path_join(p_path.replace("res://", "").get_base_dir().path_join(spl[0] + "." + new_ext));
 	} else {
 		auto_converted_export = true;
-		// if this doesn't match "filename.ext.converted.newext"
-		ERR_FAIL_COND_V_MSG(spl.size() != 4, ERR_CANT_RESOLVE, "Can't open imported file " + p_path);
-		source_file = p_path.get_base_dir().path_join(spl[0] + "." + spl[1]);
-		importer = "autoconverted";
+		if (source_file.is_empty()) {
+			// if this doesn't match "filename.ext.converted.newext"
+			String base = spl[0];
+			String ext = spl.size() != 4 ? get_new_ext(old_ext) : spl[1];
+			source_file = p_path.get_base_dir().path_join(base + "." + ext);
+		}
+		if (!res_info->get_type().to_lower().contains("texture") && !res_info->get_type().to_lower().contains("sample")) {
+			importer = "autoconverted";
+		}
 	}
 
 	not_an_import = true;
@@ -649,11 +696,14 @@ Error ImportInfov2::_load(const String &p_path) {
 		} else if (old_ext == "gdc" || old_ext == "gde") {
 			importer = "script_bytecode";
 		} else {
-			importer = "none";
+			importer = "";
 		}
 	}
-	v2metadata.instantiate();
-	v2metadata->add_source(source_file);
+	if (source_file.is_empty()) {
+		print_line("WARNING: Can't find source file for " + p_path);
+	} else if (v2metadata->get_source_count() == 0) {
+		v2metadata->add_source_at(source_file, "", 0);
+	}
 	v2metadata->set_editor(importer);
 	return OK;
 }
@@ -847,6 +897,7 @@ Error ImportInfoModern::save_md5_file(const String &output_dir) {
 
 void ImportInfo::_bind_methods() {
 	ClassDB::bind_static_method(get_class_static(), D_METHOD("load_from_file", "path", "ver_major", "ver_minor"), &ImportInfo::load_from_file, DEFVAL(0), DEFVAL(0));
+	ClassDB::bind_static_method(get_class_static(), D_METHOD("copy", "import_info"), &ImportInfo::copy);
 
 	ClassDB::bind_method(D_METHOD("get_iitype"), &ImportInfo::get_iitype);
 

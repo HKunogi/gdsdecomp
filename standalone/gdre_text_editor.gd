@@ -46,6 +46,8 @@ var text_size_minus_id: int = 0
 
 
 func reset():
+	set_text_viewer_props()
+	set_viewer_text("")
 	pass
 
 func set_viewer_text(text: String):
@@ -58,13 +60,26 @@ func set_viewer_text(text: String):
 	var prev_line = text.find("\n")
 	var next_line = text.find("\n", prev_line + 1)
 	var disabled = false
+	var too_long = false
 	while next_line != -1:
 		if (next_line - prev_line) > 4000: # greater than 4000 characters really chugs the editor when wrapping
 			CODE_VIEWER.wrap_mode = TextEdit.LINE_WRAPPING_NONE
 			disabled = true
+		if (next_line - prev_line) > 12000:
+			too_long = true
 			break
 		prev_line = next_line
 		next_line = text.find("\n", prev_line + 1)
+	if too_long:
+		# split it into lines, truncate lines > 12000 characters
+		var lines = text.split("\n")
+		var truncated_text = ""
+		for line in lines:
+			if line.length() > 12000:
+				truncated_text += line.left(12000) + " <TRUNCATED...>\n"
+			else:
+				truncated_text += line + "\n"
+		text = truncated_text
 	if disabled:
 		disable_word_wrap_option()
 	else:
@@ -73,16 +88,22 @@ func set_viewer_text(text: String):
 	CODE_VIEWER.scroll_vertical = 0
 	CODE_VIEWER.scroll_horizontal = 0
 
-func load_code(path):
+func load_code(path, override_bytecode_revision: int = 0):
 	var code_text = ""
 	if path.get_extension().to_lower() == "gd":
 		code_text = FileAccess.get_file_as_string(path)
+		set_code_viewer_props()
 	else:
-		var code: FakeGDScript = ResourceCompatLoader.non_global_load(path)
-		if (code == null):
-			return false
-		code_text = code.get_source_code()
-	set_code_viewer_props()
+		var script: FakeGDScript = FakeGDScript.new()
+		if (override_bytecode_revision > 0):
+			script.set_override_bytecode_revision(override_bytecode_revision)
+		script.load_source_code(path)
+		if (script.get_error_message() != ""):
+			code_text = "Error loading script:\n" + script.get_error_message()
+			set_text_viewer_props()
+		else:
+			code_text = script.get_source_code()
+			set_code_viewer_props()
 	set_viewer_text(code_text)
 	return true
 
@@ -238,4 +259,4 @@ func _ready():
 	_add_items_to_popup_menu(menu)
 	CODE_VIWER_OPTIONS_POPUP = CODE_VIWER_OPTIONS.get_popup()
 	_add_items_to_popup_menu(CODE_VIWER_OPTIONS_POPUP)
-	set_code_viewer_props()
+	reset()

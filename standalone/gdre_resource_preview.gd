@@ -87,6 +87,10 @@ func pop_resource_info(path: String):
 		var type = info["type"]
 		var format = info["format_type"]
 		%ResourceInfo.text = RESOURCE_INFO_TEXT_FORMAT % [path, type, format]
+		if (info["ver_major"] <= 2):
+			var iinfo = GDRESettings.get_import_info_by_dest(path)
+			if iinfo:
+				%ResourceInfo.text += "\n" + iinfo.to_string()
 	else:
 		%ResourceInfo.text = "[b]Path:[/b] " + path
 
@@ -106,7 +110,7 @@ func load_mesh(path):
 	return true
 
 
-func load_resource(path: String) -> void:
+func load_resource(path: String, override_bytecode_revision: int = 0) -> void:
 	reset()
 	var ext = path.get_extension().to_lower()
 	var error_opening = false
@@ -115,7 +119,7 @@ func load_resource(path: String) -> void:
 		%TextView.load_gdshader(path)
 		%TextView.visible = true
 	elif (is_code(ext)):
-		error_opening = not %TextView.load_code(path)
+		error_opening = not %TextView.load_code(path, override_bytecode_revision)
 		%TextView.visible = true
 	elif (is_sample(ext)):
 		error_opening = not %MediaPlayer.load_sample(path)

@@ -1206,13 +1206,34 @@ Dictionary GDRESettings::get_remaps(bool include_imports) const {
 
 bool has_old_remap(const Vector<String> &remaps, const String &src, const String &dst) {
 	int idx = remaps.find(src);
-	if (idx != -1) {
+	if (idx != -1 && idx % 2 == 0) {
 		if (dst.is_empty()) {
 			return true;
 		}
-		return idx + 1 == remaps.size() ? false : remaps[idx + 1] == dst;
+		return idx + 1 >= remaps.size() ? false : remaps[idx + 1] == dst;
 	}
 	return false;
+}
+
+String GDRESettings::get_remapped_source_path(const String &p_dst) const {
+	if (is_pack_loaded()) {
+		if (get_ver_major() >= 3) {
+			for (auto E : remap_iinfo) {
+				if (E.value->get_path() == p_dst) {
+					return E.key;
+				}
+			}
+		}
+		String setting = get_ver_major() < 3 ? "remap/all" : "path_remap/remapped_paths";
+		if (is_project_config_loaded() && current_project->pcfg->has_setting(setting)) {
+			PackedStringArray remaps = current_project->pcfg->get_setting(setting, PackedStringArray());
+			int idx = remaps.find(p_dst);
+			if (idx != -1 && idx % 2 == 1 && idx - 1 >= 0) {
+				return remaps[idx - 1];
+			}
+		}
+	}
+	return "";
 }
 
 String GDRESettings::get_mapped_path(const String &p_src) const {
@@ -1278,7 +1299,7 @@ String GDRESettings::get_remap(const String &src) const {
 		if (is_project_config_loaded() && current_project->pcfg->has_setting(setting)) {
 			PackedStringArray remaps = current_project->pcfg->get_setting(setting, PackedStringArray());
 			int idx = remaps.find(local_src);
-			if (idx != -1 && idx + 1 < remaps.size()) {
+			if (idx != -1 && idx + 1 < remaps.size() && idx % 2 == 0) {
 				return remaps[idx + 1];
 			}
 		}
@@ -1707,6 +1728,11 @@ Error GDRESettings::load_import_files() {
 		tokens.push_back({ resource_files[i], nullptr, (int)get_ver_major(), (int)get_ver_minor() });
 	}
 
+	if (tokens.size() == 0) {
+		print_line("No import files found!");
+		return OK;
+	}
+
 	Error err = TaskManager::get_singleton()->run_multithreaded_group_task(
 			this,
 			&GDRESettings::_do_import_load,
@@ -1771,11 +1797,15 @@ Ref<ImportInfo> GDRESettings::get_import_info_by_dest(const String &p_path) cons
 	Ref<ImportInfo> iinfo;
 	for (int i = 0; i < import_files.size(); i++) {
 		iinfo = import_files[i];
-		if (iinfo->get_path() == p_path) {
+		// for (auto &dest : iinfo->get_dest_files()) {
+		// 	if (dest.to_lower() == p_path.to_lower()) {
+		// 		return iinfo;
+		// 	}
+		// }
+		if (iinfo->get_dest_files().has(p_path)) {
 			return iinfo;
 		}
 	}
-	// not found
 	return Ref<ImportInfo>();
 }
 bool GDRESettings::pack_has_project_config() {
@@ -1834,39 +1864,59 @@ void GDRESettings::_do_string_load(uint32_t i, StringLoadToken *tokens) {
 	if (src_ext == "gd" || src_ext == "gdc" || src_ext == "gde") {
 		tokens[i].err = GDScriptDecomp::get_script_strings(tokens[i].path, tokens[i].engine_version, tokens[i].strings);
 		return;
-	} else if (src_ext == "csv") {
+	} else if (src_ext == "csv" || src_ext == "json") {
 		Ref<FileAccess> f = FileAccess::open(tokens[i].path, FileAccess::READ, &tokens[i].err);
 		ERR_FAIL_COND_MSG(f.is_null(), "Failed to open file " + tokens[i].path);
-		// get the first line
-		String header = f->get_line();
-		String delimiter = ",";
-		if (!header.contains(",")) {
-			if (header.contains(";")) {
-				delimiter = ";";
-			} else if (header.contains("|")) {
-				delimiter = "|";
-			} else if (header.contains("\t")) {
-				delimiter = "\t";
-			}
-		}
-		f->seek(0);
-		while (!f->eof_reached()) {
-			Vector<String> line = f->get_csv_line(delimiter);
-			for (int j = 0; j < line.size(); j++) {
-				if (!line[j].is_numeric()) {
-					tokens[i].strings.append(line[j]);
-				}
-			}
-		}
-		return;
-	} else if (src_ext == "json") {
-		String jstring = FileAccess::get_file_as_string(tokens[i].path, &tokens[i].err);
-		ERR_FAIL_COND_MSG(tokens[i].err, "Failed to open file " + tokens[i].path);
-		if (jstring.strip_edges().is_empty()) {
+		uint8_t file_len = f->get_length();
+		if (file_len == 0) {
 			return;
 		}
-		Variant var = JSON::parse_string(jstring);
-		gdre::get_strings_from_variant(var, tokens[i].strings, tokens[i].engine_version);
+		Vector<uint8_t> file_buf;
+		file_buf.resize(file_len);
+		f->get_buffer(file_buf.ptrw(), file_len);
+		// check first 8000 bytes for null bytes
+		for (int j = 0; j < MIN(file_len, 8000); j++) {
+			if (file_buf[j] == 0) {
+				return;
+			}
+		}
+		if (!gdre::detect_utf8(file_buf)) {
+			return;
+		}
+
+		if (src_ext == "csv") {
+			f->seek(0);
+			// get the first line
+			String header = f->get_line();
+			String delimiter = ",";
+			if (!header.contains(",")) {
+				if (header.contains(";")) {
+					delimiter = ";";
+				} else if (header.contains("|")) {
+					delimiter = "|";
+				} else if (header.contains("\t")) {
+					delimiter = "\t";
+				}
+			}
+			f->seek(0);
+			while (!f->eof_reached()) {
+				Vector<String> line = f->get_csv_line(delimiter);
+				for (int j = 0; j < line.size(); j++) {
+					if (!line[j].is_numeric()) {
+						tokens[i].strings.append(line[j]);
+					}
+				}
+			}
+		} else if (src_ext == "json") {
+			String jstring;
+			tokens[i].err = jstring.append_utf8((const char *)file_buf.ptr(), file_len);
+			ERR_FAIL_COND_MSG(tokens[i].err, "Failed to open file " + tokens[i].path);
+			if (jstring.strip_edges().is_empty()) {
+				return;
+			}
+			Variant var = JSON::parse_string(jstring);
+			gdre::get_strings_from_variant(var, tokens[i].strings, tokens[i].engine_version);
+		}
 		return;
 	}
 	auto res = ResourceCompatLoader::fake_load(tokens[i].path, "", &tokens[i].err);
